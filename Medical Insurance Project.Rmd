@@ -1,0 +1,306 @@
+---
+title: "Medical Insurance Project"
+author: "By Jesse"
+output: html_document
+---
+
+##### In this I project I explore health insurance data, attempt to identify which factors are most important in predicting medical expenses, and perform linear regression analysis.
+
+##### Below are the factors provided in the Medical Cost data set:
+
+* age: age of primary beneficiary
+* sex: insurance contractor gender, female, male
+* bmi: Body mass index, providing an understanding of body, weights that are relatively high or low relative to height, objective index of body weight (kg / m ^ 2) using the ratio of height to weight, ideally 18.5 to 24.9
+* children: Number of children covered by health insurance / Number of dependents
+* smoker: Smoking
+* region: the beneficiary's residential area in the US, northeast, southeast, southwest, northwest.
+* charges: Individual medical costs billed by health insurance
+
+<br>
+
+Let's get started!
+
+Loading in packages, removing objects from the environment and setting the working directory.
+
+```{r packages and wd, message=FALSE, warning=FALSE}
+if (!require("pacman")) install.packages("pacman"); library(pacman)
+pacman::p_load(tidyverse, caTools, ggthemes, janitor, corrplot, GGally, psych)
+
+rm(list=ls())
+setwd("/Users/Jesse/R/MedInsuranceProject/")
+```
+
+Reading in the data.
+
+```{r reading in the data, message=FALSE, warning=FALSE}
+df <- read_csv("/Users/Jesse/R/MedInsuranceProject/insurance.csv")
+```
+
+Let's take a took at the data:
+
+```{r checking out the data}
+head(df)
+str(df)
+```
+
+Let's change the character columns to factors:
+
+```{r factors}
+df$sex <- as.factor(df$sex)
+df$smoker <- as.factor(df$smoker)
+df$region <- as.factor(df$region)
+```
+
+Finally, let's check for any missing values:
+
+```{r missing}
+any(is.na(df))
+```
+
+No missing data! Let's move on to some exploratory data analysis.
+
+<br>
+
+#### EDA
+
+```{r EDA summary}
+summary(df)
+```
+
+Let's take a look at a histogram of the insurance charges:
+
+```{r EDA histogram 1}
+df %>% ggplot(aes(charges)) + geom_histogram(aes(y=stat(density)), fill = "light blue", color = "white", bins = 30) + 
+    ggtitle("Distribution of Charges") + theme_bw() + theme(plot.title = element_text(hjust = .5)) +
+    geom_density(col="dark blue")
+```
+
+<br>
+
+This distribution is right-skewed. Let's make the distribution closer to normal:
+
+```{r EDA histogram 2}
+df %>% ggplot(aes(log10(charges))) + geom_histogram(aes(y=stat(density)), fill = "light blue", color = "white", bins = 30) + 
+    ggtitle("Distribution of Charges") + theme_bw() + theme(plot.title = element_text(hjust = .5)) + 
+    geom_density(col = "dark blue")
+```
+
+<br>
+
+Now let's look at charges by region:
+
+```{r EDA region}
+describeBy(df$charges,df$region)
+
+df %>% ggplot(aes(region, charges)) + geom_boxplot(fill=c(3,4,6,7)) + 
+    theme_bw() + ggtitle("Medical Insurance Charges by Region")
+```
+
+<br>
+
+It looks like charges don't differ much across regions, but the highest medical expenses are in the Southeast and the lowest are in the Southwest.
+
+Let's check out charges by smoker status:
+
+```{r EDA smoker}
+describeBy(df$charges,df$smoker)
+
+df %>% ggplot(aes(smoker, charges)) + geom_boxplot(fill=c(3,2)) + 
+    theme_bw() + ggtitle("Medical Insurance Charges by Smoker Status")
+```
+
+<br>
+
+As you would expect, smokers spend much more than non-smokers. Smokers spend about 4x more compared to non-smokers when it comes to medical insurance expenses.
+
+Next, let's look at sex:
+
+```{r EDA sex}
+describeBy(df$charges,df$sex)
+
+df %>% ggplot(aes(sex, charges)) + geom_boxplot(fill=c(5,7)) + 
+    theme_bw() + ggtitle("Medical Insurance Charges by Sex")
+```
+
+<br>
+
+It appears sex doesn't seem to affect medical expenses very much.
+
+Moving on to number of children:
+
+```{r EDA children}
+describeBy(df$charges,df$children)
+
+df %>% ggplot(aes(as.factor(children), charges)) + geom_boxplot(fill=c(2:7)) + 
+    theme_bw() + ggtitle("Medical Insurance Charges by Number of Children")
+```
+
+<br>
+
+Interestingly, on average, people with 5 children spend less on medical expense than all other groups.
+
+Let's check out obesity now. First we need to create a new column for obese, which is greater than or equal to a BMI of 30.
+
+```{r EDA obesity 1}
+df <- df %>%
+    mutate(obese = as.factor(if_else(bmi >= 30, "yes", "no")))
+
+describeBy(df$charges,df$obese)
+
+df %>% ggplot(aes(obese, charges)) + geom_boxplot(fill=c(6,4)) + 
+    theme_bw() + ggtitle("Medical Charges by Obesity status (BMI 30+)")
+```
+
+<br>
+
+As we can see, the average medical expenses for an obese individual is about $5000 more than non-obese people,
+while the median expenses between the group is similar.
+
+Lastly, let's look at age, but also with smoker status.
+
+```{r EDA age}
+df %>% ggplot(aes(age, charges)) + geom_point(aes(color = smoker)) +
+    theme_bw() + ggtitle("Medical Charges by Age and Smoker Status") + scale_color_manual(values=c("red", "blue"))
+```
+
+<br>
+
+As expected, as people get older they tend to have higher medical expenses, but adding smoker status you can see the relationship between smoking and higher medical expenses.
+
+Alright, let's move on to looking at correlation between variables.
+
+<br>
+
+#### Correlation
+
+```{r EDA cor 1}
+num_cols <- sapply(df,is.numeric) # using only numeric features
+ggpairs(df[,num_cols]) # matrix of plots
+pairs.panels(df[,num_cols]) # matrix of plots using pairs.panels
+```
+
+We can see that age and charges have the highest correlation among the numeric variables. It's also interesting 
+to note that none of our numeric values are highly correlated with each other, so multicollinearity won’t be a problem.
+
+Now let's look at the correlation matrix for numeric features a different way.
+
+```{r EDA cor 2}
+cor_mx <- cor(df[,num_cols]) # correlation matrix
+cor_mx
+corrplot(cor_mx, method = "color", title = "Correlation Matrix for Numeric Features", 
+         mar=c(0,0,1,0))
+```
+
+<br>
+
+Let's move on and look at correlation between all features. But first we need to create dummy variables for sex and smoker.
+
+```{r EDA cor 3}
+df_dummy <- df %>%
+    mutate(sex_dummy = if_else(sex == "male", 1, 0)) %>%
+    mutate(smoker_dummy = if_else(smoker == "yes", 1, 0))
+
+df_dummy <- df_dummy %>% 
+    select(1,3,4,7,9,10)
+
+# correlation all features
+ggpairs(df_dummy)
+pairs.panels(df_dummy)
+
+dummy_cor_mx <- cor(df_dummy)
+corrplot(dummy_cor_mx, method = "color", title = "Correlation Matrix for All Features", 
+         mar=c(0,0,1,0))
+```
+
+<br>
+
+We can see that smoking and medical expense are highly correlated.
+
+Let's move on to building a model using all of the original features, except using obese instead of BMI because BMI is essentially the same thing as obese.
+
+<br>
+
+#### Building a model
+
+```{r model 1}
+set.seed(214)
+sample <- sample.split(df$charges, SplitRatio = 0.70)
+
+# Training Data
+train = subset(df, sample == TRUE)
+
+# Testing Data
+test = subset(df, sample == FALSE)
+
+med_model <- lm(charges ~ .-bmi, data = train)
+summary(med_model)
+plot(med_model)
+```
+
+<br>
+
+Just using the original variables we get a fairly good R-squared of 0.7304, which implies that about 73% of the variation in charges can be explained by the independent variables. Also, all variables except for region and sex, are statistically significant predictors of medical expense (p < .05).
+
+<br>
+
+Let's attempt to improve the model:
+
+First, let's remove region and sex, as they were not statistically significant.
+
+```{r model 2}
+med_model2 <- lm(charges ~ . -bmi -sex -region, data = train)
+summary(med_model2)
+plot(med_model2)
+```
+
+<br>
+
+This model is about the same, but slightly worse, with an R-squared of 0.729, still implying about 73% of the variation in charges can be explained by the independent variables. Let's try a model with an interaction between obesity and smoker status.
+
+<br>
+
+```{r model 3}
+med_model3 <- lm(charges ~ obese*smoker + age + children, data = train)
+summary(med_model3)
+plot(med_model3)
+```
+
+<br>
+
+This third model is much better than the first two, with an R-squared of .8393, implying about 84% of the variation in charges can be explained by the independent variables. Our Residual vs Fitted plot appears a little better, although the Normal Q-Q plot still indicates some problems with our fit.
+
+##### We can interpret the model as follows:
+
+* For an obese non-smoker, we can expect $54.04 higher charges on average
+* For a non-obese smoker, we can expect $13,077.17 higher charges on average
+* For each year increase in age, we can expect a $272.33 increase in average charges
+* For a person who is an obese smoker, we can expect $54.04 + $13,077.17 + $19,481.61 = $32,612.82 higher charges on average
+
+<br>
+
+#### Finally, let's make predictions
+
+```{r predictions}
+test$predicted <- predict(med_model3, newdata = test)
+test %>%
+  ggplot() + geom_point(aes(predicted, charges, color = smoker, shape = obese)) +
+  geom_abline(color = "red") + ggtitle("Prediction vs Real Values")
+```
+
+<br>
+
+It looks like our model is a pretty solid fit for our test data and our results are pretty accurate.
+
+```{r residuals}
+# calculating residuals 
+test$residuals <- test$charges - test$predicted
+
+# plot residuals 
+test %>%
+  ggplot() + geom_pointrange(aes(predicted, residuals, ymin = 0, ymax = residuals, color = smoker, shape = obese)) +
+  geom_hline(yintercept = 0) + ggtitle("Residuals vs Fitted Values")
+```
+
+<br>
+
+Overall, the residuals look pretty good, although there are several high residuals that could be caused by factors not included in the original data set. 
